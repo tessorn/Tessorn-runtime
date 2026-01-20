@@ -1,0 +1,75 @@
+name: Build Tessorn Runtime
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        board: [esp32c3, esp32s3]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Cache PlatformIO
+      uses: actions/cache@v3
+      with:
+        path: ~/.platformio
+        key: ${{ runner.os }}-platformio-${{ hashFiles('**/platformio.ini') }}
+    
+    - name: Install PlatformIO
+      run: |
+        pip install platformio
+        pio --version
+    
+    - name: Build firmware
+      run: |
+        pio run -e ${{ matrix.board }}
+    
+    - name: Calculate SHA256
+      id: hash
+      run: |
+        cd .pio/build/${{ matrix.board }}
+        sha256sum firmware.bin > firmware.bin.sha256
+        echo "hash=$(cat firmware.bin.sha256 | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+    
+    - name: Upload firmware artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: tessorn-runtime-${{ matrix.board }}
+        path: |
+          .pio/build/${{ matrix.board }}/firmware.bin
+          .pio/build/${{ matrix.board }}/firmware.bin.sha256
+    
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          .pio/build/${{ matrix.board }}/firmware.bin
+          .pio/build/${{ matrix.board }}/firmware.bin.sha256
+        body: |
+          ## Tessorn Runtime ${{ github.ref_name }}
+          
+          **Board:** ${{ matrix.board }}
+          **SHA256:** ${{ steps.hash.outputs.hash }}
+          
+          ### Installation
+          ```bash
+          esptool.py --chip esp32c3 write_flash 0x10000 firmware.bin
+          ```
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
